@@ -50,7 +50,9 @@
 #include "driverlib/uart.h"
 #include "utils/uartstdio.h"
 #include "inc/hw_types.h"
-
+    tCANMsgObject sCANMessage;
+    tCANMsgObject rCANMessage;
+    volatile bool g_bRXFlag = 0;
 //*****************************************************************************
 //
 //! \addtogroup can_examples_list
@@ -91,7 +93,7 @@
 //
 //*****************************************************************************
 volatile uint32_t g_ui32MsgCount = 0;
-
+volatile uint32_t g_r_ui32MsgCount = 0;
 //*****************************************************************************
 //
 // A flag to indicate that some transmission error occurred.
@@ -209,6 +211,7 @@ CANIntHandler(void)
         // message object 1, and the message TX is complete.  Clear the
         // message object interrupt.
         //
+        ui32Status = CANStatusGet(CAN0_BASE, CAN_STS_CONTROL);
         CANIntClear(CAN0_BASE, 1);
 
         //
@@ -223,6 +226,14 @@ CANIntHandler(void)
         //
         g_bErrFlag = 0;
     }
+    else if(ui32Status == 2)
+    {
+
+        ui32Status = CANStatusGet(CAN0_BASE, CAN_STS_CONTROL);
+        CANIntClear(CAN0_BASE, 2);
+        g_r_ui32MsgCount++;
+        g_bRXFlag = 1;
+    }
 
     //
     // Otherwise, something unexpected caused the interrupt.  This should
@@ -230,6 +241,7 @@ CANIntHandler(void)
     //
     else
     {
+
         //
         // Spurious interrupt handling can go here.
         //
@@ -250,9 +262,10 @@ main(void)
     uint32_t ui32SysClock;
 #endif
 
-    tCANMsgObject sCANMessage;
+
     uint32_t ui32MsgData;
     uint8_t *pui8MsgData;
+    uint8_t r_pui8MsgData[4];
 
     pui8MsgData = (uint8_t *)&ui32MsgData;
 
@@ -360,11 +373,9 @@ main(void)
     /*  Enable the loop back test */
     HWREG(CAN0_BASE + CAN_O_CTL) |= CAN_CTL_TEST;
     HWREG(CAN0_BASE + CAN_O_TST) |= CAN_TST_LBACK;
+    HWREG(CAN0_BASE + CAN_O_TST) |= CAN_TST_RX;
 
-    //
-    // Enable the CAN for operation.
-    //
-    CANEnable(CAN0_BASE);
+
 
     //
     // Initialize the message object that will be used for sending CAN
@@ -378,52 +389,119 @@ main(void)
     sCANMessage.ui32MsgLen = sizeof(pui8MsgData);
     sCANMessage.pui8MsgData = pui8MsgData;
 
+    rCANMessage.ui32MsgID = 0;
+    rCANMessage.ui32MsgIDMask = 0;
+    rCANMessage.ui32Flags = MSG_OBJ_RX_INT_ENABLE | MSG_OBJ_USE_ID_FILTER;
+    rCANMessage.ui32MsgLen = 4;
+
+    //
+    // Now load the message object into the CAN peripheral.  Once loaded the
+    // CAN will receive any message on the bus, and an interrupt will occur.
+    // Use message object 1 for receiving messages (this is not the same as
+    // the CAN ID which can be any value in this example).
+    //
+    CANMessageSet(CAN0_BASE, 2, &rCANMessage, MSG_OBJ_TYPE_RX);
     //
     // Enter loop to send messages.  A new message will be sent once per
     // second.  The 4 bytes of message content will be treated as an uint32_t
     // and incremented by one each time.
     //
+
+    //
+      // Enable the CAN for operation.
+      //
+      CANEnable(CAN0_BASE);
     while(1)
     {
         //
         // Print a message to the console showing the message count and the
         // contents of the message being sent.
         //
-        UARTprintf("Sending msg: 0x%02X %02X %02X %02X",
-                   pui8MsgData[0], pui8MsgData[1], pui8MsgData[2],
-                   pui8MsgData[3]);
-
-        //
-        // Send the CAN message using object number 1 (not the same thing as
-        // CAN ID, which is also 1 in this example).  This function will cause
-        // the message to be transmitted right away.
-        //
-        CANMessageSet(CAN0_BASE, 1, &sCANMessage, MSG_OBJ_TYPE_TX);
-
-        //
-        // Now wait 1 second before continuing
-        //
-        SimpleDelay();
-
-        //
-        // Check the error flag to see if errors occurred
-        //
-        if(g_bErrFlag)
+        if(g_bRXFlag == 1)
         {
-            UARTprintf(" error - cable connected?\n");
+            uint8_t uIdx = 0;
+            //
+            // Reuse the same message object that was used earlier to configure
+            // the CAN for receiving messages.  A buffer for storing the
+            // received data must also be provided, so set the buffer pointer
+            // within the message object.
+            //
+            rCANMessage.pui8MsgData = r_pui8MsgData;
+
+            //
+            // Read the message from the CAN.  Message object number 1 is used
+            // (which is not the same thing as CAN ID).  The interrupt clearing
+            // flag is not set because this interrupt was already cleared in
+            // the interrupt handler.
+            //
+            CANMessageGet(CAN0_BASE, 2, &rCANMessage, 0);
+
+            //
+            // Clear the pending message flag so that the interrupt handler can
+            // set it again when the next message arrives.
+            //
+            g_bRXFlag = 0;
+
+            //
+            // Check to see if there is an indication that some messages were
+            // lost.
+            //
+            if(sCANMessage.ui32Flags & MSG_OBJ_DATA_LOST)
+            {
+                UARTprintf("CAN message loss detected\n");
+            }
+
+            //
+            // Print out the contents of the message that was received.
+            //
+            UARTprintf("Msg ID=0x%08X len=%u data=0x",
+                       sCANMessage.ui32MsgID, sCANMessage.ui32MsgLen);
+            for(uIdx = 0; uIdx < sCANMessage.ui32MsgLen; uIdx++)
+            {
+                UARTprintf("%02X ", r_pui8MsgData[uIdx]);
+            }
+            UARTprintf("total rx count=%u\n", g_r_ui32MsgCount);
         }
         else
+
         {
-            //
-            // If no errors then print the count of message sent
-            //
-            UARTprintf(" total count = %u\n", g_ui32MsgCount);
+            UARTprintf("Sending msg: 0x%02X %02X %02X %02X",
+                               pui8MsgData[0], pui8MsgData[1], pui8MsgData[2],
+                               pui8MsgData[3]);
+
+                    //
+                    // Send the CAN message using object number 1 (not the same thing as
+                    // CAN ID, which is also 1 in this example).  This function will cause
+                    // the message to be transmitted right away.
+                    //
+                    CANMessageSet(CAN0_BASE, 1, &sCANMessage, MSG_OBJ_TYPE_TX);
+
+                    //
+                    // Now wait 1 second before continuing
+                    //
+                    SimpleDelay();
+
+                    //
+                    // Check the error flag to see if errors occurred
+                    //
+                    if(g_bErrFlag)
+                    {
+                        UARTprintf(" error - cable connected?\n");
+                    }
+                    else
+                    {
+                        //
+                        // If no errors then print the count of message sent
+                        //
+                        UARTprintf(" total count = %u\n", g_ui32MsgCount);
+                    }
+
+                    //
+                    // Increment the value in the message data.
+                    //
+                    ui32MsgData++;
         }
 
-        //
-        // Increment the value in the message data.
-        //
-        ui32MsgData++;
     }
 
 }
