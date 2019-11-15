@@ -49,7 +49,7 @@
 #include "driverlib/sysctl.h"
 #include "driverlib/uart.h"
 #include "utils/uartstdio.h"
-
+#include "inc/hw_types.h"
 
 //*****************************************************************************
 //
@@ -355,6 +355,11 @@ main(void)
     // Enable the CAN interrupt on the processor (NVIC).
     //
     IntEnable(INT_CAN0);
+
+
+    /*  Enable the loop back test */
+    HWREG(CAN0_BASE + CAN_O_CTL) |= CAN_CTL_TEST;
+    HWREG(CAN0_BASE + CAN_O_TST) |= CAN_TST_LBACK;
 
     //
     // Enable the CAN for operation.
