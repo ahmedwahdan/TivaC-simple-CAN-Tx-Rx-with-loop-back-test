@@ -373,7 +373,7 @@ main(void)
     /*  Enable the loop back test */
     HWREG(CAN0_BASE + CAN_O_CTL) |= CAN_CTL_TEST;
     HWREG(CAN0_BASE + CAN_O_TST) |= CAN_TST_LBACK;
-    HWREG(CAN0_BASE + CAN_O_TST) |= CAN_TST_RX;
+
 
 
 
